@@ -1,6 +1,6 @@
-# R-Seminar Week 2
+# EEMB 595R/194R RSeminar
 
-## Random Forest
+## Week 2: Random Forest
 
 In this seminar, we'll learn what a random forest, a supervised machine learning technique, is all about. We'll start by talking about coffee (yes, coffee!) to get a feel for the concept. You can review the main ideas in the slides (`F26_Wk2_Random_Forest.pptx`).
 
