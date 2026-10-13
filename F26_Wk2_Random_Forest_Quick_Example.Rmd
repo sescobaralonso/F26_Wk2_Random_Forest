@@ -1,0 +1,375 @@
+---
+title: "Random Forest: "
+subtitle: "Example: Species presence with four predictors"
+author: "Prepared by: Sebastián Escobar-Alonso"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 6.5,
+  fig.height = 5,
+  fig.align = "center"
+)
+
+library(randomForest)
+library(rpart)      # comes with R
+library(ggplot2)
+
+set.seed(42)
+```
+
+# RANDOM FOREST
+
+A random forest is a supervised machine learning method. For this example, we train it on sites where we already know whether the species is present, and then we use it to predict presence at new sites.
+
+
+## Simulated field data
+
+We simulate 300 field sites. At each site we "measured" four variables and
+recorded whether the species was present. Because we invent the data, **we
+know the true species niche**:
+
+- **Temperature**: the species prefers about 15 °C (hump-shaped effect).
+- **Rainfall**: more rain is better (linear effect).
+- **Soil pH**: the species prefers a pH around 6.5 (hump-shaped effect).
+- **Slope**: has **no effect at all**. It is a decoy variable.
+
+All continued is made to obtain a data set to work it:
+
+```{r data}
+n     <- 300
+temp  <- runif(n, 5, 25)       # mean annual temperature (°C)
+rain  <- runif(n, 200, 1500)   # annual rainfall (mm)
+ph    <- runif(n, 4.5, 8.5)    # soil pH
+slope <- runif(n, 0, 40)       # slope (degrees): NO effect on the species
+
+  # truth: score = how good the site is for the species
+  score <- 3 -
+    ((temp - 15) / 4)^2 +        # temperature: best at 15 °C
+    (rain - 800) / 300 -         # rainfall: more is better
+    ((ph - 6.5) / 1)^2           # soil pH: best at 6.5
+                                 # slope does not appear: it has no effect
+
+prob    <- 1 / (1 + exp(-score))   # logistic function: score -> probability
+present <- rbinom(n, 1, prob)      # draw presence/absence with that probability
+
+sites <- data.frame(temp, rain, ph, slope,
+                    species = factor(present, levels = c(0, 1),
+                                     labels = c("No", "Yes")))
+table(sites$species)   # check the balance
+head(sites, 30)
+```
+  
+The following plots show the exact theoretical relationship between environmental variables and site suitability. This represents the underlying 'biological truth' that our Random Forest model will attempt to uncover from the observed data
+
+```{r truth, fig.width=9, fig.height=3.5}
+par(mfrow = c(1, 3))
+
+t_seq <- seq(5, 25, length.out = 100)
+plot(t_seq, -((t_seq - 15) / 4)^2, type = "l", lwd = 2, col = "firebrick",
+     xlab = "Temperature (°C)", ylab = "Effect on score",
+     main = "Temperature")
+
+
+r_seq <- seq(200, 1500, length.out = 100)
+plot(r_seq, (r_seq - 800) / 300, type = "l", lwd = 2, col = "steelblue",
+     xlab = "Rainfall (mm)", ylab = "Effect on score",
+     main = "Rainfall")
+
+
+p_seq <- seq(4.5, 8.5, length.out = 100)
+plot(p_seq, -((p_seq - 6.5) / 1)^2, type = "l", lwd = 2, col = "darkgreen",
+     xlab = "Soil pH", ylab = "Effect on score",
+     main = "Soil pH")
+
+par(mfrow = c(1, 1))
+```
+
+Slope has no curve because its true effect is zero.
+
+## One decision tree: "The super-expert"
+
+A decision tree is a chain of yes/no questions. This tree is pretty unstable: small changes in the data can change the questions. Let's see the following single tree:
+
+```{r tree, fig.width=9, fig.height=6}
+tree <- rpart(species ~ temp + rain + ph + slope, data = sites) 
+#Fits a single decision tree model using the CART algorithm to predict species presence/absence.
+plot(tree, 
+     uniform = FALSE, 
+     margin = 0.1)
+  
+text(tree, cex = 0.8)
+
+```
+
+## Let's Walk Through the Decision Tree
+
+First things first: in this tree, **going left means the condition is met!** 
+
+The big question is all about **precipitation**:
+
+- **Left:** places where `rain < 873.9 mm` (less water available)
+- **Right:** places where `rain >= 873.9 mm` (more water available)
+
+---
+
+### Left side: less water availability
+
+Here, water is limited, so things get picky:
+
+1. `temp >= 20.11` → **No** (too hot and not enough water)
+2. Otherwise, `temp < 10.19` → **No** (too cold)
+3. If the temperature is between ~10.2 and ~20.1 °C, we check the soil pH:
+    - `ph < 5.695` → **No** (soil too acidic)
+    - Otherwise, `ph >= 7.967` → **No** (soil too alkaline)
+    - **Yes** only if pH is between ~5.7 and ~7.97
+
+---
+
+### Right side: more water availability
+
+With plenty of water, conditions are a lot more relax:
+
+1. `temp >= 23.12` → **No** (too hot)
+2. Otherwise, we check `temp < 9.86`:
+    - If that's **not** true (`temp >= 9.86`) → **Yes** (the simplest path in the whole tree!)
+    - If it **is** true (`temp < 9.86`), we fine-tune:
+        - `temp < 5.671` → **No** (too cold)
+        - Otherwise (temp between 5.67 and 9.86), we check `ph < 6.6`:
+            - Lower pH → **No**
+            - Higher pH → **Yes**
+
+---
+
+### Quick summary: when do we get a "Yes"?
+
+**Low rainfall** `rain < 873.9`, `10.19 <= temp < 20.11` and `5.7 <= ph < 7.97` 
+**High rainfall, moderate temperature** `rain >= 873.9` and `9.86 <= temp < 23.12`
+**High rainfall, mildly cold** `rain >= 873.9`, `5.67 <= temp < 9.86` and `ph >= 6.6`
+
+
+### Takeaway
+
+Water is the main driver. With more rain, a wider range of temperatures works. With less rain, we need the "just right" combo of mild temperatures **and** near-neutral soil pH.
+
+
+## Why one tree is not enough?
+
+To see how unstable a single tree can be, we trained four trees. Each one used 270 of the 300 sites, with 30 sites left out at random each time.
+
+The four datasets are almost identical, yet the trees come out different.
+
+```{r unstable-trees, fig.width=10, fig.height=8}
+par(mfrow = c(2, 2))
+
+for (i in 1:4) {
+  keep <- sample(nrow(sites), 270)   # drop 30 random sites
+  t_i  <- rpart(species ~ temp + rain + ph + slope, data = sites[keep, ])
+  plot(t_i, uniform = TRUE, margin = 0.1)
+  text(t_i, cex = 0.7)
+  title(paste("Tree", i))
+}
+
+par(mfrow = c(1, 1))
+```
+
+A single tree depends heavily on which sites happened to end up in the sample, so small changes in the data can change its splits. That is why we use a forest: by combining many trees, the individual quirks average out and the predictions become more stable.
+
+## Random forest: "The group of imperfect experts"
+
+### How the forest works
+
+- We grew 500 trees.
+- Each tree is trained on its own random sample of the sites.
+- Sites are drawn one at a time **with replacement**, so the same site can show up more than once.
+- Each tree learns from about 63% of the sites.
+- The other ~37% are hidden from that tree, so we use them as a test.
+```{r rf}
+rf <- randomForest(species ~ temp + rain + ph + slope, data = sites,
+                   ntree    = 500,           # number of trees to grow
+                   mtry     = 2,             # sqrt(4)
+                   replace  = TRUE, 
+                   sampsize = nrow(sites),   # 300
+                   importance = TRUE)
+print(rf)
+```
+
+### How we get the error, in four steps
+
+1. Each tree studies with about 63% of the sites.
+2. Each site is a surprise exam for about 185 trees (500 trees x 0.37 = 185). 
+3.Those trees vote Yes or No.
+4. We compare the vote with reality for all 300 sites: 58 mistakes, so the error is 19.33%.
+
+The forest is wrong for about 19% of the sites. This is the OOB (out-of-bag) error.
+
+
+### Does the error stabilize with more trees?
+
+```{r error-curve}
+plot(rf, main = "Error vs. number of trees")
+legend("topright", colnames(rf$err.rate),
+       col = 1:3, lty = 1:3, bty = "n")
+```
+
+After a couple of hundred trees the error stops changing, so 500 is enough.
+
+
+### What does `mtry` do?
+
+```{r mtry}
+oob_by_mtry <- sapply(1:4, function(m) {
+  fit <- randomForest(species ~ temp + rain + ph + slope, 
+                      data = sites,
+                      ntree = 500, 
+                      mtry = m)
+  fit$err.rate[500, "OOB"]
+})
+
+data.frame(mtry = 1:4, OOB_error = round(oob_by_mtry, 3))
+```
+
+With `mtry = 4`, every split can use all variables, so the trees look more
+alike. With `mtry = 1`, each split uses a single random variable, so the trees
+are very different. The differences here are small and partly due to chance;
+`mtry` matters more when there are many variables.
+
+## Variable importance
+
+Importance measures how much the accuracy drops when we shuffle one variable.
+If shuffling it makes the model much worse, that variable mattered.
+
+```{r importance}
+imp <- as.data.frame(importance(rf))
+imp$variable <- rownames(imp)
+imp[order(-imp$MeanDecreaseAccuracy), c("variable", "MeanDecreaseAccuracy")]
+```
+
+```{r importance-plot, fig.height=3.5}
+ggplot(imp, aes(x = reorder(variable, MeanDecreaseAccuracy),
+                y = MeanDecreaseAccuracy)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Variable importance",
+       x = NULL, y = "Mean decrease in accuracy") +
+  theme_minimal()
+```
+
+We know the truth: temperature, rainfall and pH matter, and slope does not.
+Slope should have an importance close to zero (it can be slightly positive or
+negative by chance).
+
+
+## Predicting a new site
+
+This is all the point of using Random Forest: Predicting. 
+
+```{r predict}
+new_site <- data.frame(temp = 15, 
+                       rain = 1000, 
+                       ph = 6.5, 
+                       slope = 10)
+predict(rf, 
+        new_site, 
+        type = "prob")
+
+
+bad_site <- data.frame(temp = 24, 
+                       rain = 300, 
+                       ph = 8, 
+                       slope = 10)
+predict(rf, bad_site, type = "prob")
+```
+
+The output is the proportion of the 500 trees that voted "No" and "Yes". The
+"Yes" column is the predicted probability of presence.
+
+
+## A suitability map
+
+So far our sites have no location. To draw a map, we invent a small landscape: a 10 x 10 grid where temperature drops going north, rainfall grows going east, and pH and slope change in patches. Then we ask the forest for the probability of "Yes" in every cell.
+
+```{r map-env}
+# One function that gives the four variables at any (x, y) location
+env_at <- function(x, y) {
+  data.frame(
+    temp  = pmin(pmax(22 - 1.6 * y + 1.5 * sin(x), 5), 25),
+    rain  = pmin(pmax(300 + 110 * x + 80 * sin(y), 200), 1500),
+    ph    = pmin(pmax(6.5 + 1.8 * sin(x / 2.5) * cos(y / 2.5), 4.5), 8.5),
+    slope = 20 + 15 * sin(x * y / 8)
+  )
+}
+
+grid <- expand.grid(x = seq(0, 10, length.out = 80),
+                    y = seq(0, 10, length.out = 80))
+grid <- cbind(grid, env_at(grid$x, grid$y))
+
+# Forest prediction: probability of "Yes" in each cell
+grid$forest <- predict(rf, grid[, c("temp", "rain", "ph", "slope")],
+                       type = "prob")[, "Yes"]
+
+# The true probability, from the formula we used to simulate the data
+grid$truth <- plogis(3 -
+                     ((grid$temp - 15) / 4)^2 +
+                     (grid$rain - 800) / 300 -
+                     ((grid$ph - 6.5) / 1)^2)
+```
+
+Since we know the truth, we can compare the forest's map with the real one:
+
+```{r map-compare, fig.width=9, fig.height=4}
+map_long <- rbind(
+  data.frame(grid[, c("x", "y")], prob = grid$truth,  map = "True probability"),
+  data.frame(grid[, c("x", "y")], prob = grid$forest, map = "Forest prediction")
+)
+
+ggplot(map_long, aes(x, y, fill = prob)) +
+  geom_raster() +
+  facet_wrap(~ map) +
+  scale_fill_viridis_c(limits = c(0, 1), name = "P(present)") +
+  coord_equal() +
+  labs(x = "Easting", y = "Northing") +
+  theme_minimal()
+```
+
+The forest recovers the main pattern. It looks a bit blocky because it is built from many small step-like splits, while the true surface is smooth.
+
+## Predicting new sites on the map
+
+Now we place eight new sites at random. For each one we get its environmental values, ask the forest for the probability of presence, and plot it on top of the map.
+
+```{r map-new-sites, fig.width=7, fig.height=6}
+
+new_sites <- data.frame(x = runif(8, 0, 10), 
+                        y = runif(8, 0, 10))
+new_sites <- cbind(new_sites, 
+                   env_at(new_sites$x, new_sites$y)
+                   )
+
+new_sites$prob <- predict(rf, new_sites[, c("temp", "rain", "ph", "slope")],
+                          type = "prob")[, "Yes"]
+
+ggplot() +
+  geom_raster(data = grid, aes(x, y, fill = forest)) +
+  geom_point(data = new_sites, aes(x, y, fill = prob),
+             shape = 21, size = 6, color = "black", stroke = 1) +
+  geom_text(data = new_sites, aes(x, y, label = round(prob, 2)),
+            nudge_y = 0.45, size = 3.5) +
+  scale_fill_viridis_c(limits = c(0, 1), name = "P(present)") +
+  coord_equal() +
+  labs(x = "Easting", y = "Northing") +
+  theme_minimal()
+
+new_sites[, c("x", "y", "prob")]
+```
+
+Each circle is a new site, and the number is the proportion of the 500 trees that voted "Yes" there. Sites sitting on bright cells get a high probability, and sites on dark cells get a low one.
