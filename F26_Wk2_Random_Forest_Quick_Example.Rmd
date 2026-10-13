@@ -1,8 +1,7 @@
 ---
-title: "Random Forest: "
+title: "Random Forest "
 subtitle: "Example: Species presence with four predictors"
 author: "Prepared by: Sebastián Escobar-Alonso"
-date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
   html_document:
     toc: true
@@ -26,8 +25,6 @@ library(ggplot2)
 
 set.seed(42)
 ```
-
-# RANDOM FOREST
 
 A random forest is a supervised machine learning method. For this example, we train it on sites where we already know whether the species is present, and then we use it to predict presence at new sites.
 
