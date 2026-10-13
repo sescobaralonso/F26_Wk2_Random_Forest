@@ -31,8 +31,7 @@ A random forest is a supervised machine learning method. For this example, we tr
 
 ## Simulated field data
 
-We simulate 300 field sites. At each site we "measured" four variables and
-recorded whether the species was present. Because we invent the data, **we
+We simulate 300 field sites. At each site, we simulated four variables and recorded whether the species was present. Because we invent the data, **we
 know the true species niche**:
 
 - **Temperature**: the species prefers about 15 °C (hump-shaped effect).
@@ -40,7 +39,7 @@ know the true species niche**:
 - **Soil pH**: the species prefers a pH around 6.5 (hump-shaped effect).
 - **Slope**: has **no effect at all**. It is a decoy variable.
 
-All continued is made to obtain a data set to work it:
+All of this is done to create a dataset to work with.
 
 ```{r data}
 n     <- 300
@@ -93,9 +92,9 @@ par(mfrow = c(1, 1))
 
 Slope has no curve because its true effect is zero.
 
-## One decision tree: "The super-expert"
+## One decision tree
 
-A decision tree is a chain of yes/no questions. This tree is pretty unstable: small changes in the data can change the questions. Let's see the following single tree:
+A decision tree is a chain of yes/no questions. This tree is pretty unstable: small changes in the data can change the questions. Let's see it:
 
 ```{r tree, fig.width=9, fig.height=6}
 tree <- rpart(species ~ temp + rain + ph + slope, data = sites) 
@@ -108,11 +107,11 @@ text(tree, cex = 0.8)
 
 ```
 
-## Let's Walk Through the Decision Tree
+Let's Walk Through the Decision Tree. 
 
-First things first: in this tree, **going left means the condition is met!** 
+- First things first: in this tree, **going left means the condition is met!** 
 
-The big question is all about **precipitation**:
+- The big question is all about **precipitation**:
 
 - **Left:** places where `rain < 873.9 mm` (less water available)
 - **Right:** places where `rain >= 873.9 mm` (more water available)
@@ -181,14 +180,14 @@ par(mfrow = c(1, 1))
 
 A single tree depends heavily on which sites happened to end up in the sample, so small changes in the data can change its splits. That is why we use a forest: by combining many trees, the individual quirks average out and the predictions become more stable.
 
-## Random forest: "The group of imperfect experts"
+## Random forest
 
 ### How the forest works
 
 - We grew 500 trees.
 - Each tree is trained on its own random sample of the sites.
 - Sites are drawn one at a time **with replacement**, so the same site can show up more than once.
-- Each tree learns from about 63% of the sites.
+- Each tree learns from about ~63% of the sites.
 - The other ~37% are hidden from that tree, so we use them as a test.
 ```{r rf}
 rf <- randomForest(species ~ temp + rain + ph + slope, data = sites,
@@ -203,7 +202,7 @@ print(rf)
 ### How we get the error, in four steps
 
 1. Each tree studies with about 63% of the sites.
-2. Each site is a surprise exam for about 185 trees (500 trees x 0.37 = 185). 
+2. Each site is a "surprise exam" for about 185 trees (500 trees x 0.37 = 185). 
 3.Those trees vote Yes or No.
 4. We compare the vote with reality for all 300 sites: 58 mistakes, so the error is 19.33%.
 
@@ -213,12 +212,24 @@ The forest is wrong for about 19% of the sites. This is the OOB (out-of-bag) err
 ### Does the error stabilize with more trees?
 
 ```{r error-curve}
-plot(rf, main = "Error vs. number of trees")
+
+rf2 <- randomForest(species ~ temp + rain + ph + slope, data = sites,
+                   ntree    = 1000,           # number of trees to grow
+                   mtry     = 2,             # sqrt(4)
+                   replace  = TRUE, 
+                   sampsize = nrow(sites),
+                   importance = TRUE)
+
+
+plot(rf2, main = "Error vs. number of trees")
 legend("topright", colnames(rf$err.rate),
        col = 1:3, lty = 1:3, bty = "n")
 ```
 
 After a couple of hundred trees the error stops changing, so 500 is enough.
+
+In R, the randomForest package uses 500 trees by default (ntree = 500).
+In Python, scikit-learn uses 100 trees by default (n_estimators = 100).
 
 
 ### What does `mtry` do?
@@ -237,8 +248,9 @@ data.frame(mtry = 1:4, OOB_error = round(oob_by_mtry, 3))
 
 With `mtry = 4`, every split can use all variables, so the trees look more
 alike. With `mtry = 1`, each split uses a single random variable, so the trees
-are very different. The differences here are small and partly due to chance;
-`mtry` matters more when there are many variables.
+are very different. 
+
+The differences in this exercise are small because mtry becomes more important when there are many more variables.
 
 ## Variable importance
 
@@ -261,14 +273,16 @@ ggplot(imp, aes(x = reorder(variable, MeanDecreaseAccuracy),
   theme_minimal()
 ```
 
-We know the truth: temperature, rainfall and pH matter, and slope does not.
-Slope should have an importance close to zero (it can be slightly positive or
-negative by chance).
+The plot shows how much the forest gets worse when we shuffle each variable. Temperature and rainfall matter the most, pH matters somewhat less, and slope sits at zero.
+
+That matches what we built into the data: temperature, rainfall and pH affect the species, and slope doesn't. The forest figured this out on its own.
+
+Slope even comes out slightly negative. That's just noise: shuffling it didn't hurt the model, so the variable wasn't helping. Look at the ranking rather than the exact numbers.
 
 
 ## Predicting a new site
 
-This is all the point of using Random Forest: Predicting. 
+This is the whole point of using Random Forest: prediction
 
 ```{r predict}
 new_site <- data.frame(temp = 15, 
@@ -296,7 +310,7 @@ The output is the proportion of the 500 trees that voted "No" and "Yes". The
 So far our sites have no location. To draw a map, we invent a small landscape: a 10 x 10 grid where temperature drops going north, rainfall grows going east, and pH and slope change in patches. Then we ask the forest for the probability of "Yes" in every cell.
 
 ```{r map-env}
-# One function that gives the four variables at any (x, y) location
+# Function that gives the four variables at any (x = east, y = north) location
 env_at <- function(x, y) {
   data.frame(
     temp  = pmin(pmax(22 - 1.6 * y + 1.5 * sin(x), 5), 25),
@@ -306,6 +320,8 @@ env_at <- function(x, y) {
   )
 }
 
+
+# grid size = 80 x 80 = 6400
 grid <- expand.grid(x = seq(0, 10, length.out = 80),
                     y = seq(0, 10, length.out = 80))
 grid <- cbind(grid, env_at(grid$x, grid$y))
@@ -321,7 +337,7 @@ grid$truth <- plogis(3 -
                      ((grid$ph - 6.5) / 1)^2)
 ```
 
-Since we know the truth, we can compare the forest's map with the real one:
+We can compare the forest's map with the real one:
 
 ```{r map-compare, fig.width=9, fig.height=4}
 map_long <- rbind(
@@ -336,6 +352,7 @@ ggplot(map_long, aes(x, y, fill = prob)) +
   coord_equal() +
   labs(x = "Easting", y = "Northing") +
   theme_minimal()
+
 ```
 
 The forest recovers the main pattern. It looks a bit blocky because it is built from many small step-like splits, while the true surface is smooth.
@@ -348,6 +365,7 @@ Now we place eight new sites at random. For each one we get its environmental va
 
 new_sites <- data.frame(x = runif(8, 0, 10), 
                         y = runif(8, 0, 10))
+
 new_sites <- cbind(new_sites, 
                    env_at(new_sites$x, new_sites$y)
                    )
@@ -367,6 +385,6 @@ ggplot() +
   theme_minimal()
 
 new_sites[, c("x", "y", "prob")]
-```
+``` 
 
 Each circle is a new site, and the number is the proportion of the 500 trees that voted "Yes" there. Sites sitting on bright cells get a high probability, and sites on dark cells get a low one.
